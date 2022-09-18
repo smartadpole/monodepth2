@@ -1,0 +1,1 @@
+/auto_driving/image/depth/file_list/v1.0.0/depth/monodepth2_sort/val_whole_group_split50.txt

@@ -110,6 +110,38 @@ class MonoDataset(data.Dataset):
     def __len__(self):
         return len(self.filenames)
 
+    def get_images(self, index, do_flip):
+        inputs = {}
+
+        line = self.filenames[index].split()
+        folder = line[0]
+
+        if len(line) == 3:
+            frame_index = int(line[1])
+        else:
+            frame_index = 0
+
+        if len(line) == 3:
+            side = line[2]
+        else:
+            side = None
+
+        # print('{} item--------------------'.format(index))
+        for i in self.frame_idxs:
+            # print("id: ", i)
+            if i == "s":
+                other_side = {"r": "l", "l": "r"}[side]
+                inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
+            else:
+                inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
+
+        if self.load_depth:
+            depth_gt = self.get_depth(folder, frame_index, side, do_flip)
+            inputs["depth_gt"] = np.expand_dims(depth_gt, 0)
+            inputs["depth_gt"] = torch.from_numpy(inputs["depth_gt"].astype(np.float32))
+
+        return inputs, side, do_flip
+
     def __getitem__(self, index):
         """Returns a single training item from the dataset as a dictionary.
 
@@ -134,32 +166,10 @@ class MonoDataset(data.Dataset):
             2       images resized to (self.width // 4, self.height // 4)
             3       images resized to (self.width // 8, self.height // 8)
         """
-        inputs = {}
-
         do_color_aug = self.is_train and random.random() > 0.5
         do_flip = self.is_train and random.random() > 0.5
 
-        line = self.filenames[index].split()
-        folder = line[0]
-
-        if len(line) == 3:
-            frame_index = int(line[1])
-        else:
-            frame_index = 0
-
-        if len(line) == 3:
-            side = line[2]
-        else:
-            side = None
-
-        # print('{} item--------------------'.format(index))
-        for i in self.frame_idxs:
-            # print("id: ", i)
-            if i == "s":
-                other_side = {"r": "l", "l": "r"}[side]
-                inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
-            else:
-                inputs[("color", i, -1)] = self.get_color(folder, frame_index + i, side, do_flip)
+        inputs, side, do_flip = self.get_images(index, do_flip)
 
         # adjusting intrinsics to match each scale in the pyramid
         for scale in range(self.num_scales):
@@ -183,11 +193,6 @@ class MonoDataset(data.Dataset):
         for i in self.frame_idxs:
             del inputs[("color", i, -1)]
             del inputs[("color_aug", i, -1)]
-
-        if self.load_depth:
-            depth_gt = self.get_depth(folder, frame_index, side, do_flip)
-            inputs["depth_gt"] = np.expand_dims(depth_gt, 0)
-            inputs["depth_gt"] = torch.from_numpy(inputs["depth_gt"].astype(np.float32))
 
         if "s" in self.frame_idxs:
             stereo_T = np.eye(4, dtype=np.float32)
