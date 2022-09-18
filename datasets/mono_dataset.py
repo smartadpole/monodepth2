@@ -27,8 +27,7 @@ def pil_loader(path):
 
 class MonoDataset(data.Dataset):
     """Superclass for monocular dataloaders
-
-    Args:
+ Args:
         data_path
         filenames
         height
@@ -153,7 +152,9 @@ class MonoDataset(data.Dataset):
         else:
             side = None
 
+        # print('{} item--------------------'.format(index))
         for i in self.frame_idxs:
+            # print("id: ", i)
             if i == "s":
                 other_side = {"r": "l", "l": "r"}[side]
                 inputs[("color", i, -1)] = self.get_color(folder, frame_index, other_side, do_flip)
@@ -173,8 +174,7 @@ class MonoDataset(data.Dataset):
             inputs[("inv_K", scale)] = torch.from_numpy(inv_K)
 
         if do_color_aug:
-            color_aug = transforms.ColorJitter.get_params(
-                self.brightness, self.contrast, self.saturation, self.hue)
+            color_aug = transforms.ColorJitter( self.brightness, self.contrast, self.saturation, self.hue)
         else:
             color_aug = (lambda x: x)
 
