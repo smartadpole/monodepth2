@@ -14,6 +14,8 @@ import numpy as np
 import PIL.Image as pil
 import matplotlib as mpl
 import matplotlib.cm as cm
+from file import MkdirSimple
+from tqdm import tqdm
 
 import torch
 from torchvision import transforms, datasets
@@ -30,6 +32,8 @@ def parse_args():
 
     parser.add_argument('--image_path', type=str,
                         help='path to a test image or folder of images', required=True)
+    parser.add_argument('--output_dir', type=str,
+                        help='path to output folder of depth images', required=True)
     parser.add_argument('--model_name', type=str,
                         help='name of a pretrained model to use',
                         choices=[
@@ -103,19 +107,27 @@ def test_simple(args):
     if os.path.isfile(args.image_path):
         # Only testing on a single image
         paths = [args.image_path]
-        output_directory = os.path.dirname(args.image_path)
     elif os.path.isdir(args.image_path):
         # Searching folder for images
         paths = glob.glob(os.path.join(args.image_path, '*.{}'.format(args.ext)))
-        output_directory = args.image_path
     else:
         raise Exception("Can not find args.image_path: {}".format(args.image_path))
+
+    output_directory = args.output_dir
+    output_dir_depth =  os.path.join(output_directory, "depth")
+    output_dir_disp = os.path.join(output_directory, "disp")
+    output_dir_disp_image = os.path.join(output_directory, "disp_image")
+
+
+    MkdirSimple(output_dir_depth)
+    MkdirSimple(output_dir_disp)
+    MkdirSimple(output_dir_disp_image)
 
     print("-> Predicting on {:d} test images".format(len(paths)))
 
     # PREDICTING ON EACH IMAGE IN TURN
     with torch.no_grad():
-        for idx, image_path in enumerate(paths):
+        for image_path in tqdm(paths):
 
             if image_path.endswith("_disp.jpg"):
                 # don't try to predict disparity for a disparity image!
@@ -131,7 +143,7 @@ def test_simple(args):
             input_image = input_image.to(device)
             features = encoder(input_image)
             outputs = depth_decoder(features)
-
+ 
             disp = outputs[("disp", 0)]
             disp_resized = torch.nn.functional.interpolate(
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
@@ -140,11 +152,11 @@ def test_simple(args):
             output_name = os.path.splitext(os.path.basename(image_path))[0]
             scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
             if args.pred_metric_depth:
-                name_dest_npy = os.path.join(output_directory, "{}_depth.npy".format(output_name))
+                name_dest_npy = os.path.join(output_dir_depth, "{}.npy".format(output_name))
                 metric_depth = STEREO_SCALE_FACTOR * depth.cpu().numpy()
                 np.save(name_dest_npy, metric_depth)
             else:
-                name_dest_npy = os.path.join(output_directory, "{}_disp.npy".format(output_name))
+                name_dest_npy = os.path.join(output_dir_disp, "{}.npy".format(output_name))
                 np.save(name_dest_npy, scaled_disp.cpu().numpy())
 
             # Saving colormapped depth image
@@ -155,13 +167,12 @@ def test_simple(args):
             colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
             im = pil.fromarray(colormapped_im)
 
-            name_dest_im = os.path.join(output_directory, "{}_disp.jpeg".format(output_name))
+            # gray = (disp_resized_np * 255).astype(np.uint8)
+            # im = pil.fromarray(gray)
+
+            name_dest_im = os.path.join(output_dir_disp_image, "{}.jpeg".format(output_name))
             im.save(name_dest_im)
 
-            print("   Processed {:d} of {:d} images - saved predictions to:".format(
-                idx + 1, len(paths)))
-            print("   - {}".format(name_dest_im))
-            print("   - {}".format(name_dest_npy))
 
     print('-> Done!')
 
