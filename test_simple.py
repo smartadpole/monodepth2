@@ -14,7 +14,7 @@ import numpy as np
 import PIL.Image as pil
 import matplotlib as mpl
 import matplotlib.cm as cm
-from file import MkdirSimple
+from file import MkdirSimple, Walk
 from tqdm import tqdm
 
 import torch
@@ -107,21 +107,25 @@ def test_simple(args):
     if os.path.isfile(args.image_path):
         # Only testing on a single image
         paths = [args.image_path]
+        root_len = len(os.path.dirname(paths).rstrip('/'))
     elif os.path.isdir(args.image_path):
         # Searching folder for images
-        paths = glob.glob(os.path.join(args.image_path, '*.{}'.format(args.ext)))
+        paths = Walk(args.image_path, ['jpg', 'png', 'jpeg'])
+        root_len = len(args.image_path.rstrip('/'))
     else:
         raise Exception("Can not find args.image_path: {}".format(args.image_path))
 
     output_directory = args.output_dir
     output_dir_depth =  os.path.join(output_directory, "depth")
     output_dir_disp = os.path.join(output_directory, "disp")
-    output_dir_disp_image = os.path.join(output_directory, "disp_image")
+    output_dir_disp_color = os.path.join(output_directory, "disp_color")
+    output_dir_concat_color = os.path.join(output_directory, "concat")
 
 
     MkdirSimple(output_dir_depth)
     MkdirSimple(output_dir_disp)
-    MkdirSimple(output_dir_disp_image)
+    MkdirSimple(output_dir_disp_color)
+    MkdirSimple(output_dir_concat_color)
 
     print("-> Predicting on {:d} test images".format(len(paths)))
 
@@ -134,9 +138,9 @@ def test_simple(args):
                 continue
 
             # Load image and preprocess
-            input_image = pil.open(image_path).convert('RGB')
-            original_width, original_height = input_image.size
-            input_image = input_image.resize((feed_width, feed_height), pil.LANCZOS)
+            origin_image = pil.open(image_path).convert('RGB')
+            original_width, original_height = origin_image.size
+            input_image = origin_image.resize((feed_width, feed_height), pil.LANCZOS)
             input_image = transforms.ToTensor()(input_image).unsqueeze(0)
 
             # PREDICTION
@@ -149,15 +153,17 @@ def test_simple(args):
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
 
             # Saving numpy file
-            output_name = os.path.splitext(os.path.basename(image_path))[0]
+            output_name = os.path.splitext(image_path[root_len+1:])[0]
             scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
             if args.pred_metric_depth:
                 name_dest_npy = os.path.join(output_dir_depth, "{}.npy".format(output_name))
+                MkdirSimple(name_dest_npy)
                 metric_depth = STEREO_SCALE_FACTOR * depth.cpu().numpy()
                 np.save(name_dest_npy, metric_depth)
             else:
                 name_dest_npy = os.path.join(output_dir_disp, "{}.npy".format(output_name))
-                np.save(name_dest_npy, scaled_disp.cpu().numpy())
+                MkdirSimple(name_dest_npy)
+            np.save(name_dest_npy, scaled_disp.cpu().numpy())
 
             # Saving colormapped depth image
             disp_resized_np = disp_resized.squeeze().cpu().numpy()
@@ -166,12 +172,22 @@ def test_simple(args):
             mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
             colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
             im = pil.fromarray(colormapped_im)
+            concat_img = np.hstack([im, origin_image])
 
             # gray = (disp_resized_np * 255).astype(np.uint8)
             # im = pil.fromarray(gray)
 
-            name_dest_im = os.path.join(output_dir_disp_image, "{}.jpeg".format(output_name))
+            name_dest_im = os.path.join(output_dir_disp_color, "{}.jpeg".format(output_name))
+            MkdirSimple(name_dest_im)
             im.save(name_dest_im)
+
+            # concat_img =pil.Image(concat_img)
+            # concat_img.save(os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name)))
+            import cv2
+            concat_img = cv2.cvtColor(concat_img,cv2.COLOR_RGB2BGR)
+            concat_file = os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name))
+            MkdirSimple(concat_file)
+            cv2.imwrite(concat_file, concat_img)
 
 
     print('-> Done!')
