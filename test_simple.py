@@ -172,7 +172,7 @@ def test_simple(args):
             mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
             colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
             im = pil.fromarray(colormapped_im)
-            concat_img = np.hstack([im, origin_image])
+            concat_img = np.hstack([origin_image, im])
 
             # gray = (disp_resized_np * 255).astype(np.uint8)
             # im = pil.fromarray(gray)
