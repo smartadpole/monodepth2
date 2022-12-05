@@ -29,11 +29,6 @@ from evaluate_depth import STEREO_SCALE_FACTOR
 def parse_args():
     parser = argparse.ArgumentParser(
         description='Simple testing funtion for Monodepthv2 models.')
-
-    parser.add_argument('--image_path', type=str,
-                        help='path to a test image or folder of images', required=True)
-    parser.add_argument('--output_dir', type=str,
-                        help='path to output folder of depth images', required=True)
     parser.add_argument('--model_name', type=str,
                         help='name of a pretrained model to use',
                         choices=[
@@ -103,108 +98,17 @@ def test_simple(args):
     depth_decoder.to(device)
     depth_decoder.eval()
 
-    # FINDING INPUT IMAGES
-    if os.path.isfile(args.image_path):
-        # Only testing on a single image
-        paths = [args.image_path]
-        root_len = len(os.path.dirname(paths).rstrip('/'))
-    elif os.path.isdir(args.image_path):
-        # Searching folder for images
-        paths = Walk(args.image_path, ['jpg', 'png', 'jpeg'])
-        root_len = len(args.image_path.rstrip('/'))
-    else:
-        raise Exception("Can not find args.image_path: {}".format(args.image_path))
-
-    output_directory = args.output_dir
-    output_dir_depth = os.path.join(output_directory, "depth")
-    output_dir_disp = os.path.join(output_directory, "disp")
-    output_dir_disp_color = os.path.join(output_directory, "disp_color")
-    output_dir_concat_color = os.path.join(output_directory, "concat")
-
-    MkdirSimple(output_dir_depth)
-    MkdirSimple(output_dir_disp)
-    MkdirSimple(output_dir_disp_color)
-    MkdirSimple(output_dir_concat_color)
-
-    print("-> Predicting on {:d} test images".format(len(paths)))
-
-    # PREDICTING ON EACH IMAGE IN TURN
-    with torch.no_grad():
-        for image_path in tqdm(paths):
-
-            if image_path.endswith("_disp.jpg"):
-                # don't try to predict disparity for a disparity image!
-                continue
-
-            # Load image and preprocess
-            origin_image = pil.open(image_path).convert('RGB')
-            original_width, original_height = origin_image.size
-            input_image = origin_image.resize((feed_width, feed_height), pil.LANCZOS)
-            input_image = transforms.ToTensor()(input_image).unsqueeze(0)
-
-            # PREDICTION
-            input_image = input_image.to(device)
-            features = encoder(input_image)
-
-            outputs = depth_decoder(features)
-
-            disp = outputs[("disp", 0)]
-
-            # 转onnx
-            onnx_input = torch.rand(1, 3, 192, 640)
-            onnx_input = onnx_input.to("cuda:0")
-            torch.onnx.export(monodepth2,
-                              onnx_input,
-                              "monodepth2.onnx",
-                              # where to save the model (can be a file or file-like object)
-                              export_params=True,  # store the trained parameter weights inside the model file
-                              opset_version=12,  # the ONNX version to export the model to
-                              do_constant_folding=True,  # whether to execute constant folding for optimization
-                              input_names=['input'],  # the model's input names
-                              output_names=['output'])
-
-            # disp_resized = torch.nn.functional.interpolate(
-            #     disp, (original_height, original_width), mode="bilinear", align_corners=False)
-            #
-            # # Saving numpy file
-            # output_name = os.path.splitext(image_path[root_len+1:])[0]
-            # scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
-            # if args.pred_metric_depth:
-            #     name_dest_npy = os.path.join(output_dir_depth, "{}.npy".format(output_name))
-            #     MkdirSimple(name_dest_npy)
-            #     metric_depth = STEREO_SCALE_FACTOR * depth.cpu().numpy()
-            #     np.save(name_dest_npy, metric_depth)
-            # else:
-            #     name_dest_npy = os.path.join(output_dir_disp, "{}.npy".format(output_name))
-            #     MkdirSimple(name_dest_npy)
-            # np.save(name_dest_npy, scaled_disp.cpu().numpy())
-            #
-            # # Saving colormapped depth image
-            # disp_resized_np = disp_resized.squeeze().cpu().numpy()
-            # vmax = np.percentile(disp_resized_np, 95)
-            # normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
-            # mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
-            # colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
-            # im = pil.fromarray(colormapped_im)
-            # concat_img = np.hstack([origin_image, im])
-            #
-            # # gray = (disp_resized_np * 255).astype(np.uint8)
-            # # im = pil.fromarray(gray)
-            #
-            # name_dest_im = os.path.join(output_dir_disp_color, "{}.jpeg".format(output_name))
-            # MkdirSimple(name_dest_im)
-            # im.save(name_dest_im)
-            #
-            # # concat_img =pil.Image(concat_img)
-            # # concat_img.save(os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name)))
-            # import cv2
-            # concat_img = cv2.cvtColor(concat_img,cv2.COLOR_RGB2BGR)
-            # # concat_img= cv2.applyColorMap(cv2.convertScaleAbs(concat_img, 1), cv2.COLORMAP_MAGMA)
-            # concat_file = os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name))
-            # MkdirSimple(concat_file)
-            # cv2.imwrite(concat_file, concat_img)
-
-    print('-> Done!')
+    onnx_input = torch.rand(1, 3, 192, 640)
+    onnx_input = onnx_input.to("cuda:0")
+    torch.onnx.export(monodepth2,
+                      onnx_input,
+                      "monodepth2_stereo_640x192.onnx",
+                      # where to save the model (can be a file or file-like object)
+                      export_params=True,  # store the trained parameter weights inside the model file
+                      opset_version=12,  # the ONNX version to export the model to
+                      do_constant_folding=True,  # whether to execute constant folding for optimization
+                      input_names=['input'],  # the model's input names
+                      output_names=['output'])
 
 
 if __name__ == '__main__':
