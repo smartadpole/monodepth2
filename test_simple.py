@@ -120,12 +120,14 @@ def test_simple(args):
     output_dir_disp = os.path.join(output_directory, "disp")
     output_dir_disp_color = os.path.join(output_directory, "disp_color")
     output_dir_concat_color = os.path.join(output_directory, "concat")
+    output_dir_parula_color = os.path.join(output_directory, "colormap_parula")
 
 
     MkdirSimple(output_dir_depth)
     MkdirSimple(output_dir_disp)
     MkdirSimple(output_dir_disp_color)
     MkdirSimple(output_dir_concat_color)
+    MkdirSimple(output_dir_parula_color)
 
     print("-> Predicting on {:d} test images".format(len(paths)))
 
@@ -149,6 +151,7 @@ def test_simple(args):
             outputs = depth_decoder(features)
  
             disp = outputs[("disp", 0)]
+
             disp_resized = torch.nn.functional.interpolate(
                 disp, (original_height, original_width), mode="bilinear", align_corners=False)
 
@@ -164,6 +167,18 @@ def test_simple(args):
                 name_dest_npy = os.path.join(output_dir_disp, "{}.npy".format(output_name))
                 MkdirSimple(name_dest_npy)
             np.save(name_dest_npy, scaled_disp.cpu().numpy())
+
+            # Saving PARULA img
+            dis_array = disp_resized.cpu().numpy()[0][0]
+            dis_array = (dis_array - dis_array.min()) / (dis_array.max() - dis_array.min()) * 255.0
+            dis_array = dis_array.astype("uint8")
+            import cv2
+            showImg = cv2.resize(dis_array,(dis_array.shape[-1],dis_array.shape[0]))
+            showImg = cv2.applyColorMap(cv2.convertScaleAbs(showImg,1), cv2.COLORMAP_PARULA)
+            origin_image_array = cv2.cvtColor(np.array(origin_image),cv2.COLOR_BGR2RGB)
+            showImg = np.hstack([origin_image_array, showImg])
+            PARULA_file = os.path.join(output_dir_parula_color, "{}.jpeg".format(output_name))
+            cv2.imwrite(PARULA_file,showImg)
 
             # Saving colormapped depth image
             disp_resized_np = disp_resized.squeeze().cpu().numpy()
