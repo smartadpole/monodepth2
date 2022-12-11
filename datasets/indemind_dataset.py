@@ -7,7 +7,7 @@ import PIL.Image as pil
 
 from kitti_utils import generate_depth_map
 from .mono_dataset import MonoDataset
-
+import torch
 
 class IndemindDataset(MonoDataset):
     """Superclass for different types of KITTI dataset loaders
@@ -43,7 +43,7 @@ class IndemindDataset(MonoDataset):
                         break
 
     def check_depth(self):
-        return False
+        return True
 
     def get_image_path(self, folder, file_name, side):
         image_path = os.path.join(self.data_path, folder, file_name)
@@ -57,6 +57,16 @@ class IndemindDataset(MonoDataset):
             color = color.transpose(pil.FLIP_LEFT_RIGHT)
 
         return color
+
+    def get_depth(self, folder, frame_index, side, do_flip):
+        folder = folder.replace('/cam0/', '/cam1/') if side == 'r' else folder
+        file = self.get_image_path(folder, frame_index, side)
+        depth = None
+        if os.path.exists(file):
+            depth = self.loader(file)
+            depth = depth.resize((self.width, self.height))
+
+        return depth
 
     def get_images(self, index, do_flip):
         do_flip = False
@@ -74,5 +84,11 @@ class IndemindDataset(MonoDataset):
                 inputs[("color", i, -1)] = self.get_color(folder.replace('cam0', 'cam1'), image_group[0], other_side, do_flip)
             else:
                 inputs[("color", i, -1)] = self.get_color(folder, image_group[i], side, do_flip)
+
+        if self.load_depth:
+            depth_gt = self.get_depth(folder, image_group[0], side, do_flip)
+            if depth_gt is not None:
+                inputs["depth_gt"] = np.expand_dims(depth_gt, 0)[:, :, :, 0]
+                inputs["depth_gt"] = torch.from_numpy(inputs["depth_gt"].astype(np.float32))
 
         return inputs, side, do_flip
