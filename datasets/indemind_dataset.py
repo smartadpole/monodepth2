@@ -20,8 +20,8 @@ class IndemindDataset(MonoDataset):
         # by 1 / image_height. Monodepth2 assumes a principal point to be exactly centered.
         # If your principal point is far from the center you might need to disable the horizontal
         # flip augmentation.
-        self.K = np.array([[0.486, 0, 0.537, 0],
-                           [0, 0.778, 0.507, 0],
+        self.K = np.array([[0.44, 0, 0.53, 0],
+                           [0, 0.71, 0.525, 0],
                            [0, 0, 1, 0],
                            [0, 0, 0, 1]], dtype=np.float32)
 
