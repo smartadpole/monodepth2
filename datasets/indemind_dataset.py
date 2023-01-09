@@ -20,8 +20,12 @@ class IndemindDataset(MonoDataset):
         # by 1 / image_height. Monodepth2 assumes a principal point to be exactly centered.
         # If your principal point is far from the center you might need to disable the horizontal
         # flip augmentation.
+        # self.K = np.array([[0.23, 0, 0.86, 0],
+        #                    [0, 0.23, 0.53, 0],
+        #                    [0, 0, 1, 0],
+        #                    [0, 0, 0, 1]], dtype=np.float32)
         self.K = np.array([[0.44, 0, 0.53, 0],
-                           [0, 0.71, 0.525, 0],
+                           [0, 0.71, 0.53, 0],
                            [0, 0, 1, 0],
                            [0, 0, 0, 1]], dtype=np.float32)
 
@@ -46,6 +50,11 @@ class IndemindDataset(MonoDataset):
         return True
 
     def get_image_path(self, folder, file_name, side):
+        if side == 'l':
+            folder = folder.replace('cam1', 'cam0')
+        else:
+            folder = folder.replace('cam0', 'cam1')
+
         image_path = os.path.join(self.data_path, folder, file_name)
         # print(folder, " ", file_name, " ", side, " ", image_path)
         return image_path
