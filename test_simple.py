@@ -11,9 +11,6 @@ import sys
 import glob
 import argparse
 import numpy as np
-import PIL.Image as pil
-import matplotlib as mpl
-import matplotlib.cm as cm
 from file import MkdirSimple, Walk
 from tqdm import tqdm
 
@@ -21,9 +18,8 @@ import torch
 from torchvision import transforms, datasets
 
 import networks
-from layers import disp_to_depth
-from utils import download_model_if_doesnt_exist
 from evaluate_depth import STEREO_SCALE_FACTOR
+import cv2
 
 
 def parse_args():
@@ -32,20 +28,9 @@ def parse_args():
 
     parser.add_argument('--image_path', type=str,
                         help='path to a test image or folder of images', required=True)
-    parser.add_argument('--output_dir', type=str,
+    parser.add_argument('--output', type=str,
                         help='path to output folder of depth images', required=True)
-    parser.add_argument('--model_name', type=str,
-                        help='name of a pretrained model to use',
-                        choices=[
-                            "mono_640x192",
-                            "stereo_640x192",
-                            "mono+stereo_640x192",
-                            "mono_no_pt_640x192",
-                            "stereo_no_pt_640x192",
-                            "mono+stereo_no_pt_640x192",
-                            "mono_1024x320",
-                            "stereo_1024x320",
-                            "mono+stereo_1024x320"])
+    parser.add_argument('--model_path', type=str)
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
     parser.add_argument("--no_cuda",
@@ -55,27 +40,79 @@ def parse_args():
                         help='if set, predicts metric depth instead of disparity. (This only '
                              'makes sense for stereo-trained KITTI models).',
                         action='store_true')
+    parser.add_argument('--bf', type=float, default=14.2, help="baseline length multiply focal length")
 
     return parser.parse_args()
+
+def GetDepthImg(img):
+    depth_img_rest = img.copy()
+    depth_img_R = depth_img_rest.copy()
+    depth_img_R[depth_img_rest > 255] = 255
+    depth_img_rest[depth_img_rest < 255] = 255
+    depth_img_rest -= 255
+    depth_img_G = depth_img_rest.copy()
+    depth_img_G[depth_img_rest > 255] = 255
+    depth_img_rest[depth_img_rest < 255] = 255
+    depth_img_rest -= 255
+    depth_img_B = depth_img_rest.copy()
+    depth_img_B[depth_img_rest > 255] = 255
+    depth_img_rgb = np.stack([depth_img_R, depth_img_G, depth_img_B], axis=2)
+
+    return depth_img_rgb.astype(np.uint8)
+
+
+def WriteDepth(predict_np, limg, path, name, bf):
+    if isinstance(predict_np, torch.Tensor):
+        predict_np = torch.squeeze(predict_np).cpu().detach().numpy()
+    name = os.path.splitext(name)[0] + ".png"
+    output_concat_color = os.path.join(path, "concat_color", name)
+    output_concat_gray = os.path.join(path, "concat_gray", name)
+    output_gray = os.path.join(path, "gray", name)
+    output_depth = os.path.join(path, "depth", name)
+    output_color = os.path.join(path, "color", name)
+    output_concat_depth = os.path.join(path, "concat_depth", name)
+    output_concat = os.path.join(path, "concat", name)
+    MkdirSimple(output_concat_color)
+    MkdirSimple(output_concat_gray)
+    MkdirSimple(output_concat_depth)
+    MkdirSimple(output_gray)
+    MkdirSimple(output_depth)
+    MkdirSimple(output_color)
+    MkdirSimple(output_concat)
+
+    predict_np /= 0.005
+    depth_img = bf / predict_np * 100  # to cm
+
+    predict_np_int = predict_np.astype(np.uint8)
+    color_img = cv2.applyColorMap(predict_np_int, cv2.COLORMAP_HOT)
+    limg_cv = limg # cv2.cvtColor(np.asarray(limg), cv2.COLOR_RGB2BGR)
+    concat_img_color = np.vstack([limg_cv, color_img])
+    predict_np_rgb = np.stack([predict_np, predict_np, predict_np], axis=2)
+    concat_img_gray = np.vstack([limg_cv, predict_np_rgb])
+
+    # get depth
+    depth_img_rgb = GetDepthImg(depth_img)
+    concat_img_depth = np.vstack([limg_cv, depth_img_rgb])
+    concat = np.hstack([np.vstack([limg_cv, color_img]), np.vstack([predict_np_rgb, depth_img_rgb])])
+
+    cv2.imwrite(output_concat_color, concat_img_color)
+    cv2.imwrite(output_concat_gray, concat_img_gray)
+    cv2.imwrite(output_color, color_img)
+    cv2.imwrite(output_gray, predict_np)
+    cv2.imwrite(output_depth, depth_img_rgb)
+    cv2.imwrite(output_concat_depth, concat_img_depth)
+    cv2.imwrite(output_concat, concat)
 
 
 def test_simple(args):
     """Function to predict for a single image or folder of images
     """
-    assert args.model_name is not None, \
-        "You must specify the --model_name parameter; see README.md for an example"
-
     if torch.cuda.is_available() and not args.no_cuda:
         device = torch.device("cuda")
     else:
         device = torch.device("cpu")
 
-    if args.pred_metric_depth and "stereo" not in args.model_name:
-        print("Warning: The --pred_metric_depth flag only makes sense for stereo-trained KITTI "
-              "models. For mono-trained models, output depths will not in metric space.")
-
-    download_model_if_doesnt_exist(args.model_name)
-    model_path = os.path.join("models", args.model_name)
+    model_path = args.model_path
     print("-> Loading model from ", model_path)
     encoder_path = os.path.join(model_path, "encoder.pth")
     depth_decoder_path = os.path.join(model_path, "depth.pth")
@@ -111,23 +148,10 @@ def test_simple(args):
     elif os.path.isdir(args.image_path):
         # Searching folder for images
         paths = Walk(args.image_path, ['jpg', 'png', 'jpeg'])
+        paths = [f for f in paths if 'cam0' in f]
         root_len = len(args.image_path.rstrip('/'))
     else:
         raise Exception("Can not find args.image_path: {}".format(args.image_path))
-
-    output_directory = args.output_dir
-    output_dir_depth =  os.path.join(output_directory, "depth")
-    output_dir_disp = os.path.join(output_directory, "disp")
-    output_dir_disp_color = os.path.join(output_directory, "disp_color")
-    output_dir_concat_color = os.path.join(output_directory, "concat")
-    output_dir_parula_color = os.path.join(output_directory, "colormap_parula")
-
-
-    MkdirSimple(output_dir_depth)
-    MkdirSimple(output_dir_disp)
-    MkdirSimple(output_dir_disp_color)
-    MkdirSimple(output_dir_concat_color)
-    MkdirSimple(output_dir_parula_color)
 
     print("-> Predicting on {:d} test images".format(len(paths)))
 
@@ -140,10 +164,11 @@ def test_simple(args):
                 continue
 
             # Load image and preprocess
-            origin_image = pil.open(image_path).convert('RGB')
-            original_width, original_height = origin_image.size
-            input_image = origin_image.resize((feed_width, feed_height), pil.LANCZOS)
-            input_image = transforms.ToTensor()(input_image).unsqueeze(0)
+            origin_image = cv2.imread(image_path)
+            origin_image = cv2.cvtColor(origin_image, cv2.COLOR_BGR2RGB)
+            original_height, original_width, _ = origin_image.shape
+            org_input_image = cv2.resize(origin_image, (feed_width, feed_height))
+            input_image = transforms.ToTensor()(org_input_image).unsqueeze(0)
 
             # PREDICTION
             input_image = input_image.to(device)
@@ -157,53 +182,8 @@ def test_simple(args):
 
             # Saving numpy file
             output_name = os.path.splitext(image_path[root_len+1:])[0]
-            scaled_disp, depth = disp_to_depth(disp, 0.1, 100)
-            if args.pred_metric_depth:
-                name_dest_npy = os.path.join(output_dir_depth, "{}.npy".format(output_name))
-                MkdirSimple(name_dest_npy)
-                metric_depth = STEREO_SCALE_FACTOR * depth.cpu().numpy()
-                np.save(name_dest_npy, metric_depth)
-            else:
-                name_dest_npy = os.path.join(output_dir_disp, "{}.npy".format(output_name))
-                MkdirSimple(name_dest_npy)
-            np.save(name_dest_npy, scaled_disp.cpu().numpy())
 
-            # Saving PARULA img
-            dis_array = disp_resized.cpu().numpy()[0][0]
-            dis_array = (dis_array - dis_array.min()) / (dis_array.max() - dis_array.min()) * 255.0
-            dis_array = dis_array.astype("uint8")
-            import cv2
-            showImg = cv2.resize(dis_array,(dis_array.shape[-1],dis_array.shape[0]))
-            showImg = cv2.applyColorMap(cv2.convertScaleAbs(showImg,1), cv2.COLORMAP_PARULA)
-            origin_image_array = cv2.cvtColor(np.array(origin_image),cv2.COLOR_BGR2RGB)
-            showImg = np.hstack([origin_image_array, showImg])
-            PARULA_file = os.path.join(output_dir_parula_color, "{}.jpeg".format(output_name))
-            cv2.imwrite(PARULA_file,showImg)
-
-            # Saving colormapped depth image
-            disp_resized_np = disp_resized.squeeze().cpu().numpy()
-            vmax = np.percentile(disp_resized_np, 95)
-            normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
-            mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
-            colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
-            im = pil.fromarray(colormapped_im)
-            concat_img = np.hstack([origin_image, im])
-
-            # gray = (disp_resized_np * 255).astype(np.uint8)
-            # im = pil.fromarray(gray)
-
-            name_dest_im = os.path.join(output_dir_disp_color, "{}.jpeg".format(output_name))
-            MkdirSimple(name_dest_im)
-            im.save(name_dest_im)
-
-            # concat_img =pil.Image(concat_img)
-            # concat_img.save(os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name)))
-            import cv2
-            concat_img = cv2.cvtColor(concat_img,cv2.COLOR_RGB2BGR)
-            concat_file = os.path.join(output_dir_concat_color, "{}.jpeg".format(output_name))
-            MkdirSimple(concat_file)
-            cv2.imwrite(concat_file, concat_img)
-
+            WriteDepth(disp, org_input_image, args.output, output_name, args.bf)
 
     print('-> Done!')
 
