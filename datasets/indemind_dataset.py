@@ -4,7 +4,7 @@ import os
 import skimage.transform
 import numpy as np
 import PIL.Image as pil
-
+import threading
 from kitti_utils import generate_depth_map
 from .mono_dataset import MonoDataset
 import torch
@@ -29,7 +29,13 @@ class IndemindDataset(MonoDataset):
                            [0, 0, 1, 0],
                            [0, 0, 0, 1]], dtype=np.float32)
 
+        # # data from jingliannwen
+        # self.K = np.array([[0.44, 0, 0.5, 0],
+        #                    [0, 0.7, 0.5, 0],
+        #                    [0, 0, 1, 0],
+        #                    [0, 0, 0, 1]], dtype=np.float32)
         # self.check_image()
+        self.K_dict = {}
 
     def check_image(self):
         from tqdm import tqdm
@@ -77,13 +83,37 @@ class IndemindDataset(MonoDataset):
 
         return depth
 
+    def set_by_config_yaml(self, folder):
+        config_file = os.path.join(self.data_path, *(folder.split('/')[:-2]), "config.yaml")
+        config_file = config_file.replace("REMAP", "BASE")
+        if config_file in self.K_dict:
+            self.K = self.K_dict[config_file]
+        else:
+            config_file_tmp = "/" + config_file
+            with open(config_file_tmp, 'r') as f:
+                lines = f.readlines()
+                for i in range(len(lines)):
+                    if "Pl" in lines[i]:
+                        config_Pl_x = lines[i + 4]
+                        Pl_00 = config_Pl_x.split(' ')[5]
+                        Pl_02 = config_Pl_x.split(' ')[7]
+                        config_Pl_y = lines[i + 5]
+
+                        Pl_11 = config_Pl_y.split(' ')[7]
+                        Pl_12 = config_Pl_y.split(' ')[8]
+                        self.K[0][0] = float(Pl_00.split(',')[0]) / self.width
+                        self.K[0][2] = float(Pl_02.split(',')[0]) / self.width
+                        self.K[1][1] = float(Pl_11.split(',')[0]) / self.height
+                        self.K[1][2] = float(Pl_12.split(',')[0]) / self.height
+                        self.K_dict[config_file] = self.K
+                        break
     def get_images(self, index, do_flip):
         do_flip = False
         inputs = {}
         image_group = {}
 
         folder, image_group[0], image_group[-1], image_group[1], side = self.filenames[index].split()
-
+        self.set_by_config_yaml(folder)
         # print('{} item--------------------'.format(index))
         # print(self.filenames[index])
         for i in self.frame_idxs:
