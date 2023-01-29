@@ -45,7 +45,10 @@ def parse_args():
                             "mono+stereo_no_pt_640x192",
                             "mono_1024x320",
                             "stereo_1024x320",
-                            "mono+stereo_1024x320"])
+                            "mono+stereo_1024x320", "indemind_data"])
+
+    parser.add_argument('--model_path', type=str,
+                        help='name of pretrained model by custom dataset')
     parser.add_argument('--ext', type=str,
                         help='image extension to search for in folder', default="jpg")
     parser.add_argument("--no_cuda",
@@ -74,8 +77,21 @@ def test_simple(args):
         print("Warning: The --pred_metric_depth flag only makes sense for stereo-trained KITTI "
               "models. For mono-trained models, output depths will not in metric space.")
 
-    download_model_if_doesnt_exist(args.model_name)
-    model_path = os.path.join("models", args.model_name)
+    if args.model_name in [
+        "mono_640x192",
+        "stereo_640x192",
+        "mono+stereo_640x192",
+        "mono_no_pt_640x192",
+        "stereo_no_pt_640x192",
+        "mono+stereo_no_pt_640x192",
+        "mono_1024x320",
+        "stereo_1024x320",
+        "mono+stereo_1024x320"]:
+        download_model_if_doesnt_exist(args.model_name)
+        model_path = os.path.join("models", args.model_name)
+    else:
+        assert args.model_path != "","custom dataset trained model is not set!"
+        model_path = args.model_path
     print("-> Loading model from ", model_path)
     encoder_path = os.path.join(model_path, "encoder.pth")
     depth_decoder_path = os.path.join(model_path, "depth.pth")
