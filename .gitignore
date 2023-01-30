@@ -10,3 +10,5 @@ models
 splits/indemind/
 output/
 splits/rbn100/
+tmp
+caculate_T.py
