@@ -85,15 +85,27 @@ class IndemindDataset(MonoDataset):
 
     def set_by_config_yaml(self, folder):
         config_file = os.path.join(self.data_path, *(folder.split('/')[:-2]), "config.yaml")
-        config_file = config_file.replace("REMAP", "BASE")
         if config_file in self.K_dict:
             self.K = self.K_dict[config_file]
         else:
             config_file_tmp = "/" + config_file
             with open(config_file_tmp, 'r') as f:
                 lines = f.readlines()
+                width = 640
+                height = 400
                 for i in range(len(lines)):
-                    if "Pl" in lines[i]:
+                    if 'image_dimension' in lines[i]:
+                        image_dimension = lines[i] + lines[i + 1]
+                        print(image_dimension.split(','))
+                        image_dimension = image_dimension.split(',')
+
+                        for j in range(len(image_dimension)):
+
+                            if 'image_dimension' in image_dimension[j]:
+                                width = image_dimension[j].split('[')[1]
+                                height = image_dimension[j + 1].split(']')[0]
+
+                    elif "Pl" in lines[i]:
                         config_Pl_x = lines[i + 4]
                         Pl_00 = config_Pl_x.split(' ')[5]
                         Pl_02 = config_Pl_x.split(' ')[7]
@@ -101,10 +113,10 @@ class IndemindDataset(MonoDataset):
 
                         Pl_11 = config_Pl_y.split(' ')[7]
                         Pl_12 = config_Pl_y.split(' ')[8]
-                        self.K[0][0] = float(Pl_00.split(',')[0]) / self.width
-                        self.K[0][2] = float(Pl_02.split(',')[0]) / self.width
-                        self.K[1][1] = float(Pl_11.split(',')[0]) / self.height
-                        self.K[1][2] = float(Pl_12.split(',')[0]) / self.height
+                        self.K[0][0] = float(Pl_00.split(',')[0]) / float(width)
+                        self.K[0][2] = float(Pl_02.split(',')[0]) / float(width)
+                        self.K[1][1] = float(Pl_11.split(',')[0]) / float(height)
+                        self.K[1][2] = float(Pl_12.split(',')[0]) / float(height)
                         self.K_dict[config_file] = self.K
                         break
     def get_images(self, index, do_flip):
