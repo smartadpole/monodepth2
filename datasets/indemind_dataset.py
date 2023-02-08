@@ -96,7 +96,6 @@ class IndemindDataset(MonoDataset):
                 for i in range(len(lines)):
                     if 'image_dimension' in lines[i]:
                         image_dimension = lines[i] + lines[i + 1]
-                        print(image_dimension.split(','))
                         image_dimension = image_dimension.split(',')
 
                         for j in range(len(image_dimension)):
@@ -123,8 +122,18 @@ class IndemindDataset(MonoDataset):
         do_flip = False
         inputs = {}
         image_group = {}
+        if len(self.filenames[index].split()) == 5:
+            folder, image_group[0], image_group[-1], image_group[1], side = self.filenames[index].split()
+        elif len(self.filenames[index].split()) == 4:
+            image_group[-1], image_group[0], image_group[1], side = self.filenames[index].split()
+            folder = os.path.join(*(image_group[0].split('/')[:-1]))
+            image_group[-1] = image_group[-1].split('/')[-1]
+            image_group[0] = image_group[0].split('/')[-1]
+            image_group[1] = image_group[1].split('/')[-1]
 
-        folder, image_group[0], image_group[-1], image_group[1], side = self.filenames[index].split()
+        else:
+            assert 0, "file list error, every line's length is not 4 or 5"
+
         self.set_by_config_yaml(folder)
         # print('{} item--------------------'.format(index))
         # print(self.filenames[index])
