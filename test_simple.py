@@ -74,7 +74,6 @@ def WriteDepth(predict_np, limg, path, name, bf):
     output_color = os.path.join(path, "color", name)
     output_concat_depth = os.path.join(path, "concat_depth", name)
     output_concat = os.path.join(path, "concat", name)
-    output_display = os.path.join(path, "display", name)
     MkdirSimple(output_concat_color)
     MkdirSimple(output_concat_gray)
     MkdirSimple(output_concat_depth)
@@ -82,7 +81,6 @@ def WriteDepth(predict_np, limg, path, name, bf):
     MkdirSimple(output_depth)
     MkdirSimple(output_color)
     MkdirSimple(output_concat)
-    MkdirSimple(output_display)
 
 
     predict_np /= 0.005
@@ -108,12 +106,7 @@ def WriteDepth(predict_np, limg, path, name, bf):
     cv2.imwrite(output_concat_depth, concat_img_depth)
     cv2.imwrite(output_concat, concat)
 
-    vmax = np.percentile(depth_img, 95)
-    normalizer = mpl.colors.Normalize(vmin=depth_img.min(), vmax=vmax)
-    mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
-    colormapped_im = (mapper.to_rgba(depth_img)[:, :, :3] * 255).astype(np.uint8)
-    im = pil.fromarray(colormapped_im)
-    im.save(output_display)
+
 
 
 
@@ -195,6 +188,17 @@ def test_simple(args):
 
             # Saving numpy file
             output_name = os.path.splitext(image_path[root_len+1:])[0]
+
+            output_display = os.path.join(args.output, "display",  os.path.splitext(output_name)[0] + ".png")
+            MkdirSimple(output_display)
+
+            disp_resized_np = disp_resized.squeeze().cpu().numpy()
+            vmax = np.percentile(disp_resized_np, 95)
+            normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
+            mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
+            colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
+            im = pil.fromarray(colormapped_im)
+            im.save(output_display)
 
             WriteDepth(disp, org_input_image, args.output, output_name, args.bf)
 
