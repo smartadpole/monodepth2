@@ -20,7 +20,9 @@ from torchvision import transforms, datasets
 import networks
 from evaluate_depth import STEREO_SCALE_FACTOR
 import cv2
-
+import matplotlib as mpl
+import matplotlib.cm as cm
+import PIL.Image as pil
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -80,6 +82,7 @@ def WriteDepth(predict_np, limg, path, name, bf):
     MkdirSimple(output_color)
     MkdirSimple(output_concat)
 
+
     predict_np /= 0.005
     depth_img = bf / predict_np * 100  # to cm
 
@@ -102,6 +105,9 @@ def WriteDepth(predict_np, limg, path, name, bf):
     cv2.imwrite(output_depth, depth_img_rgb)
     cv2.imwrite(output_concat_depth, concat_img_depth)
     cv2.imwrite(output_concat, concat)
+
+
+
 
 
 def test_simple(args):
@@ -182,6 +188,17 @@ def test_simple(args):
 
             # Saving numpy file
             output_name = os.path.splitext(image_path[root_len+1:])[0]
+
+            output_display = os.path.join(args.output, "display",  os.path.splitext(output_name)[0] + ".png")
+            MkdirSimple(output_display)
+
+            disp_resized_np = disp_resized.squeeze().cpu().numpy()
+            vmax = np.percentile(disp_resized_np, 95)
+            normalizer = mpl.colors.Normalize(vmin=disp_resized_np.min(), vmax=vmax)
+            mapper = cm.ScalarMappable(norm=normalizer, cmap='magma')
+            colormapped_im = (mapper.to_rgba(disp_resized_np)[:, :, :3] * 255).astype(np.uint8)
+            im = pil.fromarray(colormapped_im)
+            im.save(output_display)
 
             WriteDepth(disp, org_input_image, args.output, output_name, args.bf)
 
