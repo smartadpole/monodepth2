@@ -24,6 +24,8 @@ from layers import *
 import datasets
 import networks
 from IPython import embed
+from kornia.geometry.depth import depth_to_normals
+import losses.loss_functions as LossF
 
 
 class Trainer:
@@ -34,6 +36,28 @@ class Trainer:
         # checking height and width are multiples of 32
         assert self.opt.height % 32 == 0, "'height' must be a multiple of 32"
         assert self.opt.width % 32 == 0, "'width' must be a multiple of 32"
+
+        self.use_sc_depth = self.opt.use_sc_depth
+        if (self.use_sc_depth and self.opt.depth_dir =="") or \
+                (not self.use_sc_depth and self.opt.depth_dir !=""):
+            assert 0, "--use_sc_depth is True, but depth_dir is ''"
+        self.weights = {}
+        self.weights["photo_weight"] = self.opt.photo_weight
+        self.weights["geometry_weight"] = self.opt.geometry_weight
+        self.weights["normal_matching_weight"] = self.opt.normal_matching_weight
+        self.weights["mask_rank_weight"] = self.opt.mask_rank_weight
+        self.weights["normal_rank_weight"] = self.opt.normal_rank_weight
+
+        self.inference = 0
+
+        self.pameter = {}
+        self.pameter["no_auto_mask"] = self.opt.no_auto_mask
+        self.pameter["no_ssim"] = self.opt.no_ssim
+        self.pameter["no_dynamic_mask"] = self.opt.no_dynamic_mask
+        self.pameter["no_min_optimize"] = self.opt.no_min_optimize
+        self.pameter["model_version"] = self.opt.model_version
+
+        self.sc_depth_loss_ratio = self.opt.sc_depth_loss_ratio
 
         self.models = {}
         self.parameters_to_train = []
@@ -74,7 +98,7 @@ class Trainer:
                 self.models["pose"] = networks.PoseDecoder(
                     self.models["pose_encoder"].num_ch_enc,
                     num_input_features=1,
-                    num_frames_to_predict_for=2)
+                    num_frames_to_predict_for=1)
 
             elif self.opt.pose_model_type == "shared":
                 self.models["pose"] = networks.PoseDecoder(
@@ -127,13 +151,15 @@ class Trainer:
 
         train_dataset = self.dataset(
             self.opt.data_path, train_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext)
+            self.opt.frame_ids, 4, is_train=True, img_ext=img_ext,
+            depth_dir=self.opt.depth_dir if self.use_sc_depth else "")
         self.train_loader = DataLoader(
             train_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
         val_dataset = self.dataset(
             self.opt.data_path, val_filenames, self.opt.height, self.opt.width,
-            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext)
+            self.opt.frame_ids, 4, is_train=False, img_ext=img_ext,
+            depth_dir=self.opt.depth_dir if self.use_sc_depth else "")
         self.val_loader = DataLoader(
             val_dataset, self.opt.batch_size, True,
             num_workers=self.opt.num_workers, pin_memory=True, drop_last=True)
@@ -226,11 +252,61 @@ class Trainer:
             self.step += 1
         self.model_lr_scheduler.step()
 
+    def generate_sc_depth_pl_pred(self, tgt_depth, tgt_pseudo_depth, intrinsics):
+        # compute normal
+        tgt_normal = depth_to_normals(tgt_depth, intrinsics)
+        index_max = tgt_pseudo_depth == 65535
+        index_min = tgt_pseudo_depth == 0
+        tgt_pseudo_depth[index_max] = tgt_depth[index_max]
+        tgt_pseudo_depth[index_min] = tgt_depth[index_min]
+        tgt_pseudo_normal = depth_to_normals(tgt_pseudo_depth, intrinsics)
+        return tgt_normal, tgt_pseudo_normal
+
+    def compute_sc_depth_losses(self, inputs, outputs, outputs_ref, tgt_normal, tgt_pseudo_normal, mask):
+        tgt_img = inputs["color_aug", 0, 0][mask]
+        ref_imgs= [inputs["color_aug", f_i, 0][mask] for f_i in [-1, 1]]
+        tgt_depth = outputs[('disp', 0)][mask]
+        ref_depths = [output_ref[('disp', 0)] for output_ref in outputs_ref]
+        tgt_pseudo_depth = inputs["tgt_pseudo_depth"][mask]
+        intrinsics = inputs[("K", 0)][mask][..., :3, :3]
+        poses = [outputs[("poses", 0, -1)], outputs[("poses", 0, 1)]]
+        poses_inv = [outputs[("poses_inv", 0, -1)], outputs[("poses_inv", 0, 1)]]
+
+        w1 = self.weights["photo_weight"]
+        w2 = self.weights["geometry_weight"]
+        w3 = self.weights["normal_matching_weight"]
+        w4 = self.weights["mask_rank_weight"]
+        w5 = self.weights["normal_rank_weight"]
+
+
+        loss_1, loss_2, dynamic_mask = LossF.photo_and_geometry_loss(tgt_img, ref_imgs, tgt_depth, ref_depths,
+                                                                      intrinsics, poses, poses_inv, self.pameter)
+
+        # normal_l1_loss
+        loss_3 = (tgt_normal - tgt_pseudo_normal).abs().mean()
+
+        # mask ranking loss
+        loss_4 = LossF.mask_ranking_loss(tgt_depth, tgt_pseudo_depth, dynamic_mask)
+
+        # normal ranking loss
+        loss_5 = LossF.normal_ranking_loss(tgt_pseudo_depth, tgt_img, tgt_normal, tgt_pseudo_normal)
+
+        loss = w1 * loss_1 + w2 * loss_2 + w3 * loss_3 + w4 * loss_4 + w5 * loss_5
+
+        return loss
+
     def process_batch(self, inputs):
         """Pass a minibatch through the network and generate images and losses
         """
         for key, ipt in inputs.items():
             inputs[key] = ipt.to(self.device)
+
+        if self.use_sc_depth:
+            zero_depth = torch.from_numpy(np.zeros((inputs['tgt_pseudo_depth'].shape[1:])))
+            sc_depth_mask = [torch.equal(zero_depth.cuda(), tgt_psudo_depth) for tgt_psudo_depth in
+                             inputs['tgt_pseudo_depth']]
+            sc_depth_mask = (np.array(sc_depth_mask) == False)
+            use_scp_depth_pl = np.any(sc_depth_mask)
 
         if self.opt.pose_model_type == "shared":
             # If we are using a shared encoder for both depth and pose (as advocated
@@ -248,6 +324,10 @@ class Trainer:
             # Otherwise, we only feed the image with frame_id 0 through the depth encoder
             features = self.models["encoder"](inputs["color_aug", 0, 0])
             outputs = self.models["depth"](features)
+            # from sc_depth_pl
+            if self.use_sc_depth and use_scp_depth_pl:
+                features_ref = [self.models["encoder"](inputs["color_aug", f_i, 0][sc_depth_mask]) for f_i in [-1, 1]]
+                outputs_ref = [self.models["depth"](feature) for feature in features_ref]
 
         if self.opt.predictive_mask:
             outputs["predictive_mask"] = self.models["predictive_mask"](features)
@@ -255,45 +335,80 @@ class Trainer:
         if self.use_pose_net:
             outputs.update(self.predict_poses(inputs, features))
 
+        # from sc_depth_pl
         self.generate_images_pred(inputs, outputs)
-        losses = self.compute_losses(inputs, outputs)
 
+        if self.use_sc_depth and use_scp_depth_pl:
+            tgt_normal, tgt_pseudo_normal = self.generate_sc_depth_pl_pred(outputs[('disp', 0)][sc_depth_mask],
+                                                                           inputs["tgt_pseudo_depth"][sc_depth_mask]
+                                                                            , inputs[("K", 0)][sc_depth_mask][..., :3, :3])
+
+            losses_sc_depth = self.compute_sc_depth_losses(inputs, outputs, outputs_ref, tgt_normal, tgt_pseudo_normal, sc_depth_mask)
+
+        losses = self.compute_losses(inputs, outputs)
+        if self.use_sc_depth and use_scp_depth_pl:
+            self.inference += 1
+            if self.inference % 10000 == 0:
+                print("self.inference: {}, monodepth2_losses: {}, loss_sc_depth_pl.loss: {}".format(self.inference, losses, losses_sc_depth))
+            losses['loss'] += losses_sc_depth * self.sc_depth_loss_ratio
         return outputs, losses
 
     def predict_poses(self, inputs, features):
         """Predict poses between input frames for monocular sequences.
         """
         outputs = {}
+        if self.use_sc_depth:
+            sc_depth_mask = []
+            zero_depth = torch.from_numpy(np.zeros((inputs['tgt_pseudo_depth'].shape[1:])))
         if self.num_pose_frames == 2:
             # In this setting, we compute the pose to each source frame via a
             # separate forward pass through the pose network.
 
+            if self.use_sc_depth:
+                sc_depth_mask = [torch.equal(zero_depth.cuda(), tgt_psudo_depth) for tgt_psudo_depth in inputs['tgt_pseudo_depth']]
+                sc_depth_mask = (np.array(sc_depth_mask)==False)
+                use_scp_depth_pl = np.any(sc_depth_mask)
             # select what features the pose network takes as input
             if self.opt.pose_model_type == "shared":
                 pose_feats = {f_i: features[f_i] for f_i in self.opt.frame_ids}
             else:
                 pose_feats = {f_i: inputs["color_aug", f_i, 0] for f_i in self.opt.frame_ids}
-
+            # print("pose_feats: {}".format(pose_feats.cpu().detach().numpy().shape))
             for f_i in self.opt.frame_ids[1:]:
                 if f_i != "s":
                     # To maintain ordering we always pass frames in temporal order
                     if f_i < 0:
                         pose_inputs = [pose_feats[f_i], pose_feats[0]]
+                        if self.use_sc_depth and use_scp_depth_pl:
+                            pose_inputs_inv = [pose_feats[0][[sc_depth_mask]], pose_feats[f_i][sc_depth_mask]]
                     else:
                         pose_inputs = [pose_feats[0], pose_feats[f_i]]
+                        if self.use_sc_depth and use_scp_depth_pl:
+                            pose_inputs_inv = [pose_feats[f_i][[sc_depth_mask]], pose_feats[0][sc_depth_mask]]
 
                     if self.opt.pose_model_type == "separate_resnet":
                         pose_inputs = [self.models["pose_encoder"](torch.cat(pose_inputs, 1))]
+                        if self.use_sc_depth and use_scp_depth_pl:
+                            pose_inputs_inv = [self.models["pose_encoder"](torch.cat(pose_inputs_inv, 1))]
                     elif self.opt.pose_model_type == "posecnn":
                         pose_inputs = torch.cat(pose_inputs, 1)
 
                     axisangle, translation = self.models["pose"](pose_inputs)
+                    if self.use_sc_depth and use_scp_depth_pl:
+                        axisangle_inv, translation_inv = self.models["pose"](pose_inputs_inv)
                     outputs[("axisangle", 0, f_i)] = axisangle
                     outputs[("translation", 0, f_i)] = translation
 
                     # Invert the matrix if the frame id is negative
                     outputs[("cam_T_cam", 0, f_i)] = transformation_from_parameters(
                         axisangle[:, 0], translation[:, 0], invert=(f_i < 0))
+                    if self.use_sc_depth and use_scp_depth_pl:
+                        if f_i < 0:
+                            outputs[("poses", 0, f_i)] = torch.cat((axisangle_inv, translation_inv), dim=-1).view(-1, 6)
+                            outputs[("poses_inv", 0, f_i)] = torch.cat((axisangle, translation), dim=-1).view(-1, 6)[sc_depth_mask]
+                        else:
+                            outputs[("poses", 0, f_i)] = torch.cat((axisangle, translation), dim=-1).view(-1, 6)[sc_depth_mask]
+                            outputs[("poses_inv", 0, f_i)] = torch.cat((axisangle_inv, translation_inv), dim=-1).view(-1, 6)
 
         else:
             # Here we input all frames to the pose net (and predict all poses) together

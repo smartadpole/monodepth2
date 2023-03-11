@@ -45,7 +45,8 @@ class MonoDataset(data.Dataset):
                  frame_idxs,
                  num_scales,
                  is_train=False,
-                 img_ext='.jpg'):
+                 img_ext='.jpg',
+                 depth_dir=""):
         super(MonoDataset, self).__init__()
 
         self.data_path = data_path
@@ -54,6 +55,7 @@ class MonoDataset(data.Dataset):
         self.width = width
         self.num_scales = num_scales
         self.interp = Image.ANTIALIAS
+        self.depth_dir = depth_dir
 
         self.frame_idxs = frame_idxs
 
@@ -198,7 +200,9 @@ class MonoDataset(data.Dataset):
             stereo_T = np.eye(4, dtype=np.float32)
             baseline_sign = -1 if do_flip else 1
             side_sign = -1 if side == "l" else 1
-            stereo_T[0, 3] = side_sign * baseline_sign * 0.05
+            if baseline_sign == -1:
+                assert 0
+            stereo_T[0, 3] = side_sign * baseline_sign * 0.122
 
             inputs["stereo_T"] = torch.from_numpy(stereo_T)
 
