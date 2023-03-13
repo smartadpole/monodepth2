@@ -41,6 +41,8 @@ class Trainer:
         if (self.use_sc_depth and self.opt.depth_dir =="") or \
                 (not self.use_sc_depth and self.opt.depth_dir !=""):
             assert 0, "--use_sc_depth is True, but depth_dir is ''"
+        self.alpha = 10
+        self.beta = 0.01
         self.weights = {}
         self.weights["photo_weight"] = self.opt.photo_weight
         self.weights["geometry_weight"] = self.opt.geometry_weight
@@ -339,11 +341,15 @@ class Trainer:
         self.generate_images_pred(inputs, outputs)
 
         if self.use_sc_depth and use_scp_depth_pl:
-            tgt_normal, tgt_pseudo_normal = self.generate_sc_depth_pl_pred(outputs[('disp', 0)][sc_depth_mask],
+            tgt_normal, tgt_pseudo_normal = self.generate_sc_depth_pl_pred(1.0/(self.alpha *
+                                                                                outputs[('disp', 0)][sc_depth_mask] +
+                                                                                self.beta),
                                                                            inputs["tgt_pseudo_depth"][sc_depth_mask]
                                                                             , inputs[("K", 0)][sc_depth_mask][..., :3, :3])
 
-            losses_sc_depth = self.compute_sc_depth_losses(inputs, outputs, outputs_ref, tgt_normal, tgt_pseudo_normal, sc_depth_mask)
+            losses_sc_depth = self.compute_sc_depth_losses(inputs,1.0 / (self.alpha * outputs + self.beta),
+                                                           1.0 / (self.alpha * outputs_ref + self.beta), tgt_normal,
+                                                           tgt_pseudo_normal, sc_depth_mask)
 
         losses = self.compute_losses(inputs, outputs)
         if self.use_sc_depth and use_scp_depth_pl:
