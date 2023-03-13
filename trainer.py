@@ -267,8 +267,8 @@ class Trainer:
     def compute_sc_depth_losses(self, inputs, outputs, outputs_ref, tgt_normal, tgt_pseudo_normal, mask):
         tgt_img = inputs["color_aug", 0, 0][mask]
         ref_imgs= [inputs["color_aug", f_i, 0][mask] for f_i in [-1, 1]]
-        tgt_depth = outputs[('disp', 0)][mask]
-        ref_depths = [output_ref[('disp', 0)] for output_ref in outputs_ref]
+        tgt_depth = 1.0 / (self.alpha * outputs[('disp', 0)][mask] + self.beta)
+        ref_depths = [1.0 / (self.alpha * output_ref[('disp', 0)] + self.beta) for output_ref in outputs_ref]
         tgt_pseudo_depth = inputs["tgt_pseudo_depth"][mask]
         intrinsics = inputs[("K", 0)][mask][..., :3, :3]
         poses = [outputs[("poses", 0, -1)], outputs[("poses", 0, 1)]]
@@ -347,8 +347,7 @@ class Trainer:
                                                                            inputs["tgt_pseudo_depth"][sc_depth_mask]
                                                                             , inputs[("K", 0)][sc_depth_mask][..., :3, :3])
 
-            losses_sc_depth = self.compute_sc_depth_losses(inputs,1.0 / (self.alpha * outputs + self.beta),
-                                                           1.0 / (self.alpha * outputs_ref + self.beta), tgt_normal,
+            losses_sc_depth = self.compute_sc_depth_losses(inputs, outputs, outputs_ref, tgt_normal,
                                                            tgt_pseudo_normal, sc_depth_mask)
 
         losses = self.compute_losses(inputs, outputs)
