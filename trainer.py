@@ -257,10 +257,11 @@ class Trainer:
     def generate_sc_depth_pl_pred(self, tgt_depth, tgt_pseudo_depth, intrinsics):
         # compute normal
         tgt_normal = depth_to_normals(tgt_depth, intrinsics)
-        index_max = tgt_pseudo_depth == 65535
-        index_min = tgt_pseudo_depth == 0
+        min_value, max_value = 0, 65535
+        index_max = tgt_pseudo_depth == max_value
+        index_max_large = tgt_depth >= max_value
+        index_max &= index_max_large
         tgt_pseudo_depth[index_max] = tgt_depth[index_max]
-        tgt_pseudo_depth[index_min] = tgt_depth[index_min]
         tgt_pseudo_normal = depth_to_normals(tgt_pseudo_depth, intrinsics)
         return tgt_normal, tgt_pseudo_normal
 
