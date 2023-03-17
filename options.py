@@ -25,6 +25,14 @@ class MonodepthOptions:
                                  type=str,
                                  help="log directory",
                                  default=os.path.join(os.path.expanduser("~"), "tmp"))
+        self.parser.add_argument("--use_sc_depth",
+                                 help="if set, add use_sc_depth to this model",
+                                 action="store_true")
+
+        self.parser.add_argument("--depth_dir",
+                                 type=str,
+                                 help="if set depth path for sc_depth_pl",
+                                 default="")
 
         # TRAINING options
         self.parser.add_argument("--model_name",
@@ -202,6 +210,34 @@ class MonodepthOptions:
                                  help="if set will perform the flipping post processing "
                                       "from the original monodepth paper",
                                  action="store_true")
+
+        # loss for sc_v1
+        self.parser.add_argument('--photo_weight', type=float,
+                            default=1.0, help='photometric loss weight')
+        self.parser.add_argument('--geometry_weight', type=float,
+                            default=0.1, help='geometry loss weight')
+        # loss for sc_v3
+        self.parser.add_argument('--mask_rank_weight', type=float, default=0.1,
+                            help='ranking loss with dynamic mask sampling')
+        self.parser.add_argument('--normal_matching_weight', type=float,
+                            default=0.1, help='weight for normal L1 loss')
+        self.parser.add_argument('--normal_rank_weight', type=float, default=0.1,
+                            help='edge-guided sampling for normal ranking loss')
+
+        self.parser.add_argument('--no_min_optimize', action='store_true',
+                            help='optimize the minimum loss')
+
+        self.parser.add_argument('--model_version', type=str,
+                            default='v3', choices=['v1', 'v2', 'v3'])
+
+        self.parser.add_argument('--no_auto_mask', action='store_true',
+                            help='masking invalid static points')
+
+        self.parser.add_argument('--no_dynamic_mask',
+                            action='store_true', help='masking dynamic regions')
+
+        self.parser.add_argument('--sc_depth_loss_ratio',
+                            default=0.2, help='weight for sc_depth_pl scale')
 
     def parse(self):
         self.options = self.parser.parse_args()

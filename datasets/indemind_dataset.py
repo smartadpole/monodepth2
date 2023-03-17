@@ -4,10 +4,12 @@ import os
 import skimage.transform
 import numpy as np
 import PIL.Image as pil
+from imageio.v2 import imread
 import threading
 from kitti_utils import generate_depth_map
 from .mono_dataset import MonoDataset
 import torch
+CONFIG_FILE = ['config.yaml', 'MODULE.yaml', 'MoudleParam.yaml']
 
 class IndemindDataset(MonoDataset):
     """Superclass for different types of KITTI dataset loaders
@@ -39,7 +41,6 @@ class IndemindDataset(MonoDataset):
 
     def check_image(self):
         from tqdm import tqdm
-        print("check bad image")
         with open('{}_bad_images.txt'.format("train" if self.is_train else "val"), 'w') as file:
             for f in tqdm(self.filenames):
                 image_group = {}
@@ -57,9 +58,11 @@ class IndemindDataset(MonoDataset):
 
     def get_image_path(self, folder, file_name, side):
         if side == 'l':
-            folder = folder.replace('cam1', 'cam0')
+            folder = folder.replace('/cam1', '/cam0')
+            folder = folder.replace('/right', '/left')
         else:
-            folder = folder.replace('cam0', 'cam1')
+            folder = folder.replace('/cam0', '/cam1')
+            folder = folder.replace('/left', '/right')
 
         image_path = os.path.join(self.data_path, folder, file_name)
         # print(folder, " ", file_name, " ", side, " ", image_path)
@@ -74,7 +77,8 @@ class IndemindDataset(MonoDataset):
         return color
 
     def get_depth(self, folder, frame_index, side, do_flip):
-        folder = folder.replace('/cam0/', '/cam1/') if side == 'r' else folder
+        folder = folder.replace('/cam0', '/cam1') if side == 'r' else folder
+        folder = folder.replace('/left', '/right') if side == 'r' else folder
         file = self.get_image_path(folder, frame_index, side)
         depth = None
         if os.path.exists(file):
@@ -83,13 +87,23 @@ class IndemindDataset(MonoDataset):
 
         return depth
 
+    def GetConfigFile(self, path):
+        for file_name in CONFIG_FILE:
+            file = os.path.join(path, file_name)
+            if os.path.exists(file):
+                break
+        if not os.path.exists(file):
+            assert 0, "camera config {} not exist! exit".format(file)
+        return file
+
     def set_by_config_yaml(self, folder):
-        config_file = os.path.join(self.data_path, *(folder.split('/')[:-2]), "config.yaml")
+        config_file = "/" + os.path.join(self.data_path, *(folder.split('/')[:-2]))
+        config_file = self.GetConfigFile(config_file)
+
         if config_file in self.K_dict:
             self.K = self.K_dict[config_file]
         else:
-            config_file_tmp = "/" + config_file
-            with open(config_file_tmp, 'r') as f:
+            with open(config_file, 'r') as f:
                 lines = f.readlines()
                 width = 640
                 height = 400
@@ -103,7 +117,10 @@ class IndemindDataset(MonoDataset):
                             if 'image_dimension' in image_dimension[j]:
                                 width = image_dimension[j].split('[')[1]
                                 height = image_dimension[j + 1].split(']')[0]
-
+                    elif "width_l" in lines[i]:
+                        width = float(lines[i].split(' ')[1])
+                    elif "height_l" in lines[i]:
+                        height = float(lines[i].split(' ')[1])
                     elif "Pl" in lines[i]:
                         config_Pl_x = lines[i + 4]
                         Pl_00 = config_Pl_x.split(' ')[5]
@@ -127,6 +144,7 @@ class IndemindDataset(MonoDataset):
         elif len(self.filenames[index].split()) == 4:
             image_group[-1], image_group[0], image_group[1], side = self.filenames[index].split()
             folder = os.path.join(*(image_group[0].split('/')[:-1]))
+            image_group_temp = image_group.copy()
             image_group[-1] = image_group[-1].split('/')[-1]
             image_group[0] = image_group[0].split('/')[-1]
             image_group[1] = image_group[1].split('/')[-1]
@@ -141,9 +159,29 @@ class IndemindDataset(MonoDataset):
             # print("id: ", i)
             if i == "s":
                 other_side = {"r": "l", "l": "r"}[side]
-                inputs[("color", i, -1)] = self.get_color(folder.replace('cam0', 'cam1'), image_group[0], other_side, do_flip)
+                inputs[("color", i, -1)] = self.get_color(folder.replace('/cam0', '/cam1'), image_group[0], other_side, do_flip)
+                inputs[("color", i, -1)] = self.get_color(folder.replace('/left', '/right'), image_group[0], other_side, do_flip)
+
             else:
-                inputs[("color", i, -1)] = self.get_color(folder, image_group[i], side, do_flip)
+                if len(self.filenames[index].split()) == 5:
+                    inputs[("color", i, -1)] = self.get_color(folder, image_group[i], side, do_flip)
+                elif len(self.filenames[index].split()) == 4:
+                    inputs[("color", i, -1)] = self.get_color(os.path.join(*(image_group_temp[i].split('/')[:-1])),
+                                                              image_group[i], side, do_flip)
+
+        if self.depth_dir != "":
+            if side == 'l':
+                file = os.path.join(self.depth_dir, folder, image_group[0]).replace(".jpg", ".png")
+                if os.path.exists(file):
+                    tgt_pseudo_depth = imread(file).astype(np.float32)
+                    tgt_pseudo_depth.resize(self.height, self.width)
+                    if tgt_pseudo_depth.ndim < 3:  # depth
+                        tgt_pseudo_depth = np.expand_dims(tgt_pseudo_depth, axis=0)
+                    inputs["tgt_pseudo_depth"] = torch.from_numpy(tgt_pseudo_depth).float()
+                else:
+                    assert 0, "depth image: {} used for dc_depth_pl is not exist!".format(file)
+            else:
+                inputs["tgt_pseudo_depth"] = torch.from_numpy(np.zeros((1, self.height, self.width))).float()
 
         if self.load_depth:
             depth_gt = self.get_depth(folder, image_group[0], side, do_flip)

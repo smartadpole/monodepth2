@@ -74,6 +74,8 @@ def WriteDepth(predict_np, limg, path, name, bf):
     output_color = os.path.join(path, "color", name)
     output_concat_depth = os.path.join(path, "concat_depth", name)
     output_concat = os.path.join(path, "concat", name)
+    output_gray_scale = os.path.join(path, "gray_scale", name)
+
     MkdirSimple(output_concat_color)
     MkdirSimple(output_concat_gray)
     MkdirSimple(output_concat_depth)
@@ -81,7 +83,7 @@ def WriteDepth(predict_np, limg, path, name, bf):
     MkdirSimple(output_depth)
     MkdirSimple(output_color)
     MkdirSimple(output_concat)
-
+    MkdirSimple(output_gray_scale)
 
     predict_np /= 0.005
     depth_img = bf / predict_np * 100  # to cm
@@ -105,10 +107,12 @@ def WriteDepth(predict_np, limg, path, name, bf):
     cv2.imwrite(output_depth, depth_img_rgb)
     cv2.imwrite(output_concat_depth, concat_img_depth)
     cv2.imwrite(output_concat, concat)
+    depth_img *= 300
+    depth_img[depth_img > 65535] = 65535
+    depth_img[depth_img < 1] = 1
 
 
-
-
+    cv2.imwrite(output_gray_scale, depth_img.astype("uint16"))
 
 def test_simple(args):
     """Function to predict for a single image or folder of images
@@ -203,7 +207,6 @@ def test_simple(args):
             WriteDepth(disp, org_input_image, args.output, output_name, args.bf)
 
     print('-> Done!')
-
 
 if __name__ == '__main__':
     args = parse_args()
